@@ -19,6 +19,11 @@ module.exports = {
   // Enable Istanbul-based code coverage collection on every test run
   collectCoverage: true,
 
+  // Explicitly specify source files to collect coverage from, ensuring
+  // server.js is instrumented even when tests do not require() it directly
+  // (tests recreate the handler to avoid auto-start EADDRINUSE conflicts)
+  collectCoverageFrom: ['server.js'],
+
   // Output coverage reports (text, html, lcov) to the coverage/ directory
   coverageDirectory: 'coverage',
 

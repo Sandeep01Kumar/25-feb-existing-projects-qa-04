@@ -729,3 +729,140 @@ describe('Response Integrity Tests', () => {
     expect(Buffer.byteLength(response.body, 'utf-8')).toBe(14);
   });
 });
+
+// ===========================================================================
+// TEST SUITE 10: server.js Module Coverage Tests
+// ===========================================================================
+
+/**
+ * This describe block safely requires the actual server.js module to achieve
+ * code coverage instrumentation of all 14 lines. Without this, Jest's Istanbul
+ * coverage engine never executes server.js because other test suites recreate
+ * the handler pattern instead of importing the module directly.
+ *
+ * Strategy: Mock http.createServer() BEFORE requiring server.js so that:
+ *   - The request handler callback is captured without starting a real server
+ *   - server.listen() is intercepted to prevent actual TCP binding (no EADDRINUSE)
+ *   - The listen callback executes, covering the console.log startup message
+ *   - The captured handler is then invoked with mock req/res to cover lines 7-9
+ *
+ * IMPORTANT: This block is intentionally placed LAST so all other test suites
+ * (which use the real http module) complete before mocking begins.
+ */
+describe('server.js Module Coverage', () => {
+  let capturedHandler;
+  let mockServerInstance;
+  let consoleSpy;
+
+  beforeAll(() => {
+    // Clear Jest module registry so require('../server') re-executes server.js
+    jest.resetModules();
+
+    // Spy on console.log before requiring server.js to capture the real
+    // startup message from server.js line 13 — not a simulated call
+    consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Create a mock server object that server.js will receive from createServer()
+    mockServerInstance = {
+      listen: jest.fn((listenPort, listenHostname, callback) => {
+        // Execute the listen callback to cover server.js line 13 (console.log)
+        if (typeof callback === 'function') {
+          callback();
+        }
+      }),
+      on: jest.fn(),
+      close: jest.fn((callback) => {
+        if (typeof callback === 'function') {
+          callback();
+        }
+      }),
+      address: jest.fn(() => ({ address: '127.0.0.1', family: 'IPv4', port: 3000 })),
+    };
+
+    // Mock http.createServer to capture the request handler without starting a server
+    const httpModule = require('http');
+    jest.spyOn(httpModule, 'createServer').mockImplementation((handler) => {
+      capturedHandler = handler;
+      return mockServerInstance;
+    });
+
+    // Require server.js — executes all 14 lines under Istanbul instrumentation:
+    //   Line 1:  const http = require('http')       — uses our mocked http module
+    //   Line 3:  const hostname = '127.0.0.1'       — constant assignment (covered)
+    //   Line 4:  const port = 3000                  — constant assignment (covered)
+    //   Line 6:  http.createServer((req, res) => {  — mock captures the handler
+    //   Line 12: server.listen(3000, '127.0.0.1', …) — mock executes the callback
+    //   Line 13: console.log(…)                     — executed by listen callback
+    require('../server');
+  });
+
+  afterAll(() => {
+    // Restore all mocks to prevent interference with any subsequent operations
+    consoleSpy.mockRestore();
+    jest.restoreAllMocks();
+    jest.resetModules();
+  });
+
+  it('should call http.createServer with a request handler function', () => {
+    const httpModule = require('http');
+    expect(httpModule.createServer).toHaveBeenCalledTimes(1);
+    expect(typeof capturedHandler).toBe('function');
+  });
+
+  it('should call server.listen with port 3000, hostname 127.0.0.1, and a callback', () => {
+    expect(mockServerInstance.listen).toHaveBeenCalledTimes(1);
+    expect(mockServerInstance.listen).toHaveBeenCalledWith(
+      3000,
+      '127.0.0.1',
+      expect.any(Function)
+    );
+  });
+
+  it('should log the correct startup message from server.js', () => {
+    // Verifies the ACTUAL console.log call from server.js line 13,
+    // not a simulated call — this addresses the lifecycle log design concern
+    expect(consoleSpy).toHaveBeenCalledWith(
+      'Server running at http://127.0.0.1:3000/'
+    );
+  });
+
+  it('should define a handler that sets statusCode to 200', () => {
+    const mockReq = {};
+    const mockRes = {
+      statusCode: null,
+      setHeader: jest.fn(),
+      end: jest.fn(),
+    };
+
+    // Invoke the captured handler to cover server.js lines 7-9
+    capturedHandler(mockReq, mockRes);
+
+    expect(mockRes.statusCode).toBe(200);
+  });
+
+  it('should define a handler that sets Content-Type to text/plain', () => {
+    const mockReq = {};
+    const mockRes = {
+      statusCode: null,
+      setHeader: jest.fn(),
+      end: jest.fn(),
+    };
+
+    capturedHandler(mockReq, mockRes);
+
+    expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Type', 'text/plain');
+  });
+
+  it('should define a handler that sends Hello, World!\\n as response body', () => {
+    const mockReq = {};
+    const mockRes = {
+      statusCode: null,
+      setHeader: jest.fn(),
+      end: jest.fn(),
+    };
+
+    capturedHandler(mockReq, mockRes);
+
+    expect(mockRes.end).toHaveBeenCalledWith('Hello, World!\n');
+  });
+});
